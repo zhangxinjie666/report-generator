@@ -22,8 +22,9 @@ from pathlib import Path
 import pymupdf
 
 BASE_DIR = Path(__file__).resolve().parent.parent  # backend/
-PDF_PATH = BASE_DIR / "assets" / "示例报告.pdf"
-CHROMA_DIR = BASE_DIR / "assets" / "chroma_db"
+# assets 在项目根目录（与 config.py 的 assets_dir/chroma_dir 同一位置），不在 backend 下
+PDF_PATH = BASE_DIR.parent / "assets" / "示例报告.pdf"
+CHROMA_DIR = BASE_DIR.parent / "assets" / "chroma_db"
 MODEL_NAME = "BAAI/bge-small-zh-v1.5"  # 与 rag_engine 同一个模型——两套向量必须同一坐标系（U7 结论）
 
 
@@ -76,7 +77,7 @@ def chunk_by_section(pages: list[dict], chunk_size: int = 350, overlap: int = 60
     # TODO 2.1: 把 None 换成你的标题正则（re.compile 的 pattern 参数）
     #   要求：匹配形如 "一、实验目的" "三、实验原理" 的【行首】
     #   提示：中文数字字符集 [一二三四五六七八九十]{1,3}，后面跟一个全角顿号 、
-    title_pattern = None  # ← 填写 re.compile(...)
+    title_pattern = re.compile(r"^[一二三四五六七八九十]{1,3}、")  # ← 填写 re.compile(...)
 
     sections = []    # 收集所有章节，每个元素 {"page": 起始页码, "title": 标题行, "lines": [行, ...]}
     current = None   # 当前正在收集的章节；None = 还没遇到第一个标题（如页眉、报告大标题，直接丢弃）
@@ -90,7 +91,12 @@ def chunk_by_section(pages: list[dict], chunk_size: int = 350, overlap: int = 60
             #   2. 否则 → 若 current 不为 None，把 line 归入 current["lines"]
             #   3. 标题行自己就是章节的第一行（title 与 lines[0] 相同）——块首天然带标题
             #   提示：判断"是否标题"用 title_pattern.match(line)（match 只看行首，正好符合要求）
-            pass  # ← 替换 pass
+              # ← 替换 pass
+            if title_pattern.match(line):
+                current = {"page": page["page"], "title": line, "lines": [line]}
+                sections.append(current)
+            elif current:
+                current["lines"].append(line)
 
     # TODO 2.3: 章节 → 块（替换下面的 pass，对 sections 逐个处理）
     #   1. 章节全文 = "".join(sec["lines"])
@@ -101,7 +107,18 @@ def chunk_by_section(pages: list[dict], chunk_size: int = 350, overlap: int = 60
     #      但必须 < 512——想想这个数字是哪来的）
     #      子块的 section 字段同样填 sec["title"]
     chunks = []
-    pass  # ← 替换 pass
+    for sec in sections:
+        text = "".join(sec["lines"])
+        if len(text) <= chunk_size:
+            chunks.append({"text": text, "page": sec["page"], "section": sec["title"]})
+        else:
+            # ← 替换 pass
+            step = chunk_size - overlap  # 每次前进的步长
+            for start in range(0, len(text), step):
+                piece = text[start : start + chunk_size]
+                if len(piece) < 30:  # 末尾太短的碎块丢弃（与 rag_engine 一致）
+                    break
+                chunks.append({"text": sec["title"] + piece, "page": sec["page"], "section": sec["title"]})
     return chunks
 
 
